@@ -2,7 +2,7 @@ from flask import Flask, request
 import requests, os
 from dotenv import load_dotenv
 
-# ✅ Load environment variables (works both locally and on Railway)
+# ✅ Load environment variables (works both locally and on Render/Railway)
 load_dotenv()
 
 app = Flask(__name__)
@@ -14,18 +14,18 @@ PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 
 @app.route('/')
 def home():
-    return "🚀 Flask WhatsApp Webhook is running on Railway!"
+    return "🚀 Flask WhatsApp Webhook is running on Render!"
 
 # ✅ Webhook Route (Verification + Incoming Messages)
 @app.route("/webhook", methods=["GET", "POST"])
 def webhook():
     if request.method == "GET":
-        # Meta verification
-        mode = request.args.get("hub.mode")
+        # 🔍 Meta verification (WhatsApp calls this when you press Verify)
         token = request.args.get("hub.verify_token")
         challenge = request.args.get("hub.challenge")
 
-        if mode == "subscribe" and token == VERIFY_TOKEN:
+        # ✅ Only check verify_token (hub.mode isn’t mandatory)
+        if token == VERIFY_TOKEN:
             print("✅ Webhook verified successfully!")
             return challenge, 200
         else:
@@ -33,14 +33,19 @@ def webhook():
             return "Verification failed", 403
 
     elif request.method == "POST":
-        # Handle incoming messages
+        # 📩 Handle incoming messages
         data = request.get_json(force=True, silent=True)
         print("📩 Incoming Message:", data)
 
         try:
-            msg = data.get("entry", [])[0]["changes"][0]["value"].get("messages", [])[0]
-            sender = msg.get("from")
-            message = msg.get("text", {}).get("body")
+            entry = data.get("entry", [])
+            if not entry:
+                print("⚠️ Empty entry list.")
+                return "no entry", 204
+
+            msg_data = entry[0]["changes"][0]["value"].get("messages", [])[0]
+            sender = msg_data.get("from")
+            message = msg_data.get("text", {}).get("body")
 
             if not sender or not message:
                 print("⚠️ Empty or malformed message payload.")
@@ -83,7 +88,7 @@ def send_message(to, text):
         print("❌ Failed to send message:", e)
 
 
-# ✅ Correct port handling for Railway (with debug disabled)
+# ✅ Correct port handling for Render/Railway
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=False)
