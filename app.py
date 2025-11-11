@@ -65,9 +65,8 @@ def webhook():
 
 # ✅ Function to Send WhatsApp Messages
 def send_message(to, text):
-    if not ACCESS_TOKEN or not PHONE_NUMBER_ID:
-        print("⚠️ Missing ACCESS_TOKEN or PHONE_NUMBER_ID.")
-        return
+    print("Using Phone Number ID:", PHONE_NUMBER_ID)
+    print("Using Access Token (first 15 chars):", ACCESS_TOKEN[:15])
 
     url = f"https://graph.facebook.com/v17.0/{PHONE_NUMBER_ID}/messages"
     headers = {
@@ -84,8 +83,11 @@ def send_message(to, text):
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=10)
         print("📤 Sent message response:", response.json())
+        if response.status_code != 200:
+            print("⚠️ Error:", response.text)
     except requests.RequestException as e:
         print("❌ Failed to send message:", e)
+
 
 
 # ✅ Correct port handling for Render/Railway
