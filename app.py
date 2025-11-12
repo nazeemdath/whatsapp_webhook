@@ -1,6 +1,7 @@
 from flask import Flask, request
 import requests, os, json
 from dotenv import load_dotenv
+from backend.db import query_products_by_name  # ✅ Supabase DB connection
 
 # ✅ Load environment variables
 load_dotenv()
@@ -13,10 +14,13 @@ ACCESS_TOKEN = os.getenv("ACCESS_TOKEN")
 PHONE_NUMBER_ID = os.getenv("PHONE_NUMBER_ID")
 
 
+
+# ------------------------------------------------------------------------------------
+# ✅ Home Route (for quick Render testing)
+# ------------------------------------------------------------------------------------
 @app.route('/')
 def home():
-    return "🚀 Flask WhatsApp Webhook is live and running!"
-
+    return "🚀 Flask WhatsApp Webhook is running on Render!"
 
 # ------------------------------------------------------------------------------------
 # ✅ Webhook Route (Verification + Incoming Messages)
@@ -24,7 +28,7 @@ def home():
 @app.route("/webhook", methods=["GET", "POST"])
 def webhook():
     if request.method == "GET":
-        # 🧾 Webhook Verification
+        # 🔍 Meta verification (WhatsApp calls this when you press Verify)
         token = request.args.get("hub.verify_token")
         challenge = request.args.get("hub.challenge")
 
@@ -36,55 +40,30 @@ def webhook():
             return "Verification failed", 403
 
     elif request.method == "POST":
-        # 📩 Incoming messages and status events
+        # 📩 Handle incoming messages
         data = request.get_json(force=True, silent=True)
         print("📩 Incoming Webhook Payload:")
         print(json.dumps(data, indent=2))
 
         try:
-            # Safety: check if entry and changes exist
-            if not data.get("entry"):
-                print("⚠️ No entry found in payload.")
+            entry = data.get("entry", [])
+            if not entry:
+                print("⚠️ Empty entry list.")
                 return "no entry", 204
 
-            entry = data["entry"][0]
-            changes = entry.get("changes", [])
-            if not changes:
-                print("⚠️ No changes found.")
-                return "no changes", 204
-
-            value = changes[0].get("value", {})
-
-            # Process incoming messages only
-            if "messages" in value:
-                message = value["messages"][0]
-                sender = message.get("from")
-                text = message.get("text", {}).get("body", "")
+            msg_data = entry[0]["changes"][0]["value"].get("messages", [])[0]
+            sender = msg_data.get("from")
+            message = msg_data.get("text", {}).get("body")
 
                 if not sender or not text:
                     print("⚠️ Empty or malformed message payload.")
                     return "ignored", 204
 
-                print(f"💬 Message from {sender}: {text}")
+            print(f"💬 Message from {sender}: {message}")
 
-                # 🧠 Simple reply (extend this logic later)
-                reply = f"Hi there! You said: {text}"
-                send_message(sender, reply)
-
-            elif "statuses" in value:
-                # Status updates (sent, delivered, read, etc.)
-                statuses = value.get("statuses", [])
-                if statuses:
-                    status_event = statuses[0]
-                    message_id = status_event.get("id")
-                    status = status_event.get("status")
-                    timestamp = status_event.get("timestamp")
-                    print(f"ℹ️ Message {message_id} → {status} at {timestamp}")
-                else:
-                    print("ℹ️ Received status event with no details.")
-
-            else:
-                print("ℹ️ Ignored non-message event type.")
+            # Auto-reply logic
+            reply = f"Hi there! You said: {message}"
+            send_message(sender, reply)
 
         except Exception as e:
             print("❌ Error processing payload:", str(e))
@@ -96,7 +75,6 @@ def webhook():
 # ✅ Function to Send WhatsApp Messages
 # ------------------------------------------------------------------------------------
 def send_message(to, text):
-    """Send a WhatsApp message using Cloud API"""
     if not ACCESS_TOKEN or not PHONE_NUMBER_ID:
         print("⚠️ Missing ACCESS_TOKEN or PHONE_NUMBER_ID.")
         return
@@ -115,12 +93,9 @@ def send_message(to, text):
 
     try:
         response = requests.post(url, headers=headers, json=payload, timeout=10)
-        res_data = response.json()
-        print("📤 Sent message response:", json.dumps(res_data, indent=2))
-        if response.status_code != 200:
-            print("⚠️ Message sending failed:", response.text)
+        print("📤 Sent message response:", response.json())
     except requests.RequestException as e:
-        print("❌ Error sending message:", str(e))
+        print("❌ Failed to send message:", e)
 
 
 # ------------------------------------------------------------------------------------
