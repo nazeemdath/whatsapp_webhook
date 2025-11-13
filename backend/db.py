@@ -1,59 +1,83 @@
+# backend/db.py
 import os
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import sessionmaker
+import requests
 from dotenv import load_dotenv
+from urllib.parse import quote_plus
 
-# ✅ Load environment variables
 load_dotenv()
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+SUPABASE_URL = os.getenv("SUPABASE_URL")        # e.g. https://yourproject.supabase.co
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")        # anon/public key (or service key for server)
+SUPABASE_TIMEOUT = 10                           # seconds
 
-# ✅ Connect with SSL (required by Supabase)
-engine = create_engine(
-    DATABASE_URL,
-    pool_pre_ping=True,
-    connect_args={"sslmode": "require"}
-)
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+if not SUPABASE_URL or not SUPABASE_KEY:
+    print("❌ Missing SUPABASE_URL or SUPABASE_KEY in environment variables")
 
 
-# ✅ Function to query products safely
-def query_products_by_name(term):
-    """Search for a product by name or model."""
+def _build_headers():
+    return {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+
+
+def query_products_by_name(term, limit: int = 10):
+    """
+    Query Supabase 'products' table using REST API.
+    Matches name, model or sku (case-insensitive).
+    Returns a list of product dicts (may be empty).
+    """
     try:
-        with engine.connect() as conn:
-            query = text("""
-                SELECT id, name, model, price, stock, category
-                FROM products
-                WHERE LOWER(name) LIKE :q OR LOWER(model) LIKE :q
-                LIMIT 10
-            """)
+        if not term:
+            return []
 
-            result = conn.execute(query, {"q": f"%{term.lower()}%"})
+        term = str(term).strip()
+        # escape percent, spaces etc. quote_plus will help in URL params if required
+        # Build an 'or' filter: (name.ilike.%term%,model.ilike.%term%,sku.ilike.%term%)
+        # Supabase REST expects filters supplied either as params or in the URL.
+        # We'll build the 'or' param manually.
+        escaped = quote_plus(term)  # for safety inside param values (not strictly necessary for ilike)
+        ilike_part = f"%{term}%"
 
-            # ✅ Convert rows safely across all SQLAlchemy versions
-            products = []
-            for row in result:
-                if hasattr(row, "_mapping"):
-                    products.append(dict(row._mapping))  # SQLAlchemy 2.x
-                else:
-                    products.append(dict(zip(result.keys(), row)))  # Fallback
+        # The 'or' param must be URL encoded in requests automatically when provided in params dict.
+        or_filter = f"(name.ilike.%{term}%,model.ilike.%{term}%,sku.ilike.%{term}%)"
 
+        url = f"{SUPABASE_URL}/rest/v1/products"
+        params = {
+            "select": "id,name,model,sku,price,stock,category,description",
+            "or": or_filter,
+            "limit": str(limit)
+        }
+
+        resp = requests.get(url, headers=_build_headers(), params=params, timeout=SUPABASE_TIMEOUT)
+
+        if resp.status_code == 200:
+            products = resp.json()
+            # optional: normalize numeric fields
+            for p in products:
+                # convert price to float if string
+                if "price" in p and p["price"] is not None:
+                    try:
+                        p["price"] = float(p["price"])
+                    except Exception:
+                        pass
+                if "stock" in p and p["stock"] is not None:
+                    try:
+                        p["stock"] = int(p["stock"])
+                    except Exception:
+                        pass
+            # debug log
+            print(f"🔍 Supabase returned {len(products)} products for term='{term}'")
             return products
+        else:
+            print("❌ Supabase REST API error:", resp.status_code, resp.text)
+            return []
 
-    except Exception as e:
-        print("❌ Database query error:", e)
+    except requests.RequestException as e:
+        print("❌ Network error contacting Supabase REST API:", e)
         return []
-
-
-# ✅ Test Supabase connection
-if __name__ == "__main__":
-    try:
-        with engine.connect() as conn:
-            result = conn.execute(text("SELECT NOW();"))
-            print("✅ Supabase connection test passed! Current server time:", list(result)[0][0])
-
-            # Optional: test query here
-            print("🔍 Testing product query:", query_products_by_name("iphone"))
     except Exception as e:
-        print("❌ Database connection failed:", e)
+        print("❌ Exception during Supabase REST query:", e)
+        return []
